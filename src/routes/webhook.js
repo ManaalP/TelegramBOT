@@ -1,5 +1,5 @@
 const express = require("express");
-const { TELEGRAM_TOKEN, USER_DAILY_LIMIT } = require("../config");
+const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET } = require("../config");
 const { resolveQuery } = require("../gemini/router");
 const { analyse }      = require("../gemini/analyser");
 const { fetchEmails, getUserEmail }  = require("../gmail/fetcher");
@@ -10,6 +10,8 @@ const { sendEmail }    = require("../gmail/sender");
 const { log }          = require("../utils/logger");
 const { nowIST, dateIST } = require("../utils/helpers");
 const redisClient      = require("../utils/redis");
+const supabase         = require("../utils/supabase");
+const { google }       = require("googleapis");
 
 const router = express.Router();
 
@@ -64,6 +66,28 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     return;
   }
 
+  // --- MULTI-TENANT AUTHENTICATION CHECK ---
+  const { data: userAuth } = await supabase.from("users").select("refresh_token").eq("chat_id", chatId).single();
+  
+  if (!userAuth || !userAuth.refresh_token) {
+    const redirectUri = `https://${req.get('host')}/oauth2callback`;
+    const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
+    const SCOPES = [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/calendar.events"
+    ];
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      scope: SCOPES,
+      prompt: "consent",
+      state: chatId.toString(),
+    });
+    await tg(chatId, `Welcome! To use this bot, please connect your Google account by clicking the link below:\n\nLogin with Google`);
+    return;
+  }
+
   // --- DRAFT INTERCEPTION LOGIC ---
   if (PENDING_EMAILS.has(chatId)) {
     const draft = PENDING_EMAILS.get(chatId);
@@ -97,10 +121,10 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       try {
         let event;
         if (draft.eventId) {
-          event = await updateCalendarEvent(draft.eventId, draft.summary, draft.startTime, draft.endTime, draft.guests, draft.description, draft.createMeet);
+          event = await updateCalendarEvent(chatId, draft.eventId, draft.summary, draft.startTime, draft.endTime, draft.guests, draft.description, draft.createMeet);
           await tg(chatId, `✅ Calendar event updated successfully!\nLink: ${event.htmlLink}`);
         } else {
-          event = await createCalendarEvent(draft.summary, draft.startTime, draft.endTime, draft.guests, draft.description, draft.createMeet);
+          event = await createCalendarEvent(chatId, draft.summary, draft.startTime, draft.endTime, draft.guests, draft.description, draft.createMeet);
           await tg(chatId, `✅ Calendar event created successfully!\nLink: ${event.htmlLink}`);
         }
       } catch (err) {
@@ -147,7 +171,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
           const startTime = parts[1];
           const endTime = parts[2];
           const guests = parts.length > 3 && parts[3] ? parts[3].split(",") : [];
-          const event = await createCalendarEvent(summary, startTime, endTime, guests);
+          const event = await createCalendarEvent(chatId, summary, startTime, endTime, guests);
           await tg(chatId, `✅ Calendar invite created successfully!\nLink: ${event.htmlLink}`);
           return;
         }
@@ -229,7 +253,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     if (intent === 3 || intent === 9) {
       try {
         console.log("🔍 Fetching Google Calendar events...");
-        const events = await getUpcomingEvents(10);
+        const events = await getUpcomingEvents(chatId, 10);
         console.log(`✅ Found ${events.length} upcoming events.`);
         
         if (events.length > 0) {
@@ -389,7 +413,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
         }
       } else if (matchDelete) {
         try {
-          await deleteCalendarEvent(matchDelete[1]);
+        await deleteCalendarEvent(chatId, matchDelete[1]);
           replyText = "✅ Event deleted successfully.";
         } catch (err) {
           replyText = "❌ Failed to delete event: " + err.message;
@@ -398,7 +422,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
         const parts = matchRsvp[1].split("|").map(s => s.trim().replace(/^["'*`]+|["'*`]+$/g, ""));
         if (parts.length >= 2) {
           try {
-            await rsvpCalendarEvent(parts[0], parts[1].toLowerCase());
+          await rsvpCalendarEvent(chatId, parts[0], parts[1].toLowerCase());
             replyText = `✅ RSVP updated to ${parts[1].toLowerCase()}.`;
           } catch (err) {
             replyText = "❌ Failed to update RSVP: " + err.message;

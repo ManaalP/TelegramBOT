@@ -1,26 +1,26 @@
 const { google } = require("googleapis");
 const config = require("../config");
+const supabase = require("../utils/supabase");
 
-// Initialize the OAuth2 client using the existing credentials
-const oAuth2Client = new google.auth.OAuth2(
-  config.CLIENT_ID,
-  config.CLIENT_SECRET
-);
-
-oAuth2Client.setCredentials({
-  refresh_token: config.REFRESH_TOKEN,
-});
-
-// Create the calendar client
-const calendar = google.calendar({ version: "v3", auth: oAuth2Client });
+async function getCalendarClient(chatId) {
+  const { data, error } = await supabase.from("users").select("refresh_token").eq("chat_id", chatId).single();
+  if (error || !data || !data.refresh_token) {
+    throw new Error("User not authenticated or missing refresh token.");
+  }
+  const oAuth2Client = new google.auth.OAuth2(config.CLIENT_ID, config.CLIENT_SECRET);
+  oAuth2Client.setCredentials({ refresh_token: data.refresh_token });
+  return google.calendar({ version: "v3", auth: oAuth2Client });
+}
 
 /**
  * Fetches upcoming events from the user's primary Google Calendar.
+ * @param {number|string} chatId - Telegram Chat ID
  * @param {number} maxResults - Maximum number of events to return.
  * @returns {Promise<Array>} List of upcoming events.
  */
-async function getUpcomingEvents(maxResults = 10) {
+async function getUpcomingEvents(chatId, maxResults = 10) {
   try {
+    const calendar = await getCalendarClient(chatId);
     const response = await calendar.events.list({
       calendarId: "primary",
       timeMin: new Date().toISOString(),
@@ -45,8 +45,9 @@ async function getUpcomingEvents(maxResults = 10) {
  * @param {boolean} createMeet - Whether to generate a Google Meet link.
  * @returns {Promise<Object>} The created event.
  */
-async function createCalendarEvent(summary, startTime, endTime, attendees = [], description = "", createMeet = false) {
+async function createCalendarEvent(chatId, summary, startTime, endTime, attendees = [], description = "", createMeet = false) {
   try {
+    const calendar = await getCalendarClient(chatId);
     const systemTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
     const event = {
       summary: summary,
@@ -71,8 +72,9 @@ async function createCalendarEvent(summary, startTime, endTime, attendees = [], 
   }
 }
 
-async function updateCalendarEvent(eventId, summary, startTime, endTime, attendees = [], description = "", createMeet = false) {
+async function updateCalendarEvent(chatId, eventId, summary, startTime, endTime, attendees = [], description = "", createMeet = false) {
   try {
+    const calendar = await getCalendarClient(chatId);
     const systemTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
     const event = {};
     if (summary) event.summary = summary;
@@ -101,8 +103,9 @@ async function updateCalendarEvent(eventId, summary, startTime, endTime, attende
   }
 }
 
-async function deleteCalendarEvent(eventId) {
+async function deleteCalendarEvent(chatId, eventId) {
   try {
+    const calendar = await getCalendarClient(chatId);
     await calendar.events.delete({
       calendarId: "primary",
       eventId: eventId,
@@ -114,8 +117,9 @@ async function deleteCalendarEvent(eventId) {
   }
 }
 
-async function rsvpCalendarEvent(eventId, responseStatus) {
+async function rsvpCalendarEvent(chatId, eventId, responseStatus) {
   try {
+    const calendar = await getCalendarClient(chatId);
     const eventRes = await calendar.events.get({ calendarId: "primary", eventId: eventId });
     const event = eventRes.data;
     const attendees = event.attendees || [];
