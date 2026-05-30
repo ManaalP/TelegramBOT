@@ -94,7 +94,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     const lowerText = userText.trim().toLowerCase();
     if (['okay', 'ok', 'yes', 'send', 'send it', 'looks good'].includes(lowerText)) {
       try {
-        await sendEmail(draft.to, draft.subject, draft.body, draft.threadId, draft.inReplyTo);
+        await sendEmail(chatId, draft.to, draft.subject, draft.body, draft.threadId, draft.inReplyTo);
         await tg(chatId, `✅ Email sent successfully to ${draft.to}!`);
       } catch (err) {
         await tg(chatId, "❌ Failed to send email: " + err.message);
@@ -150,7 +150,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
         if (parts.length >= 3) {
           const [to, subject, ...bodyParts] = parts;
           const body = bodyParts.join("|");
-          await sendEmail(to, subject, body);
+          await sendEmail(chatId, to, subject, body);
           await tg(chatId, `✅ Email sent successfully to ${to}!`);
           return;
         }
@@ -239,7 +239,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       emailData = last.emailData;
       meta = last.meta;
     } else {
-      const fetchRes = await fetchEmails(gmailSearchQuery, intent);
+      const fetchRes = await fetchEmails(chatId, gmailSearchQuery, intent);
       emailData = fetchRes.emailData;
       meta = fetchRes.meta;
       if (intent !== 8 && intent !== 9 && intent !== 10) {
@@ -303,7 +303,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       ? `Based on the following email and calendar data, please answer this question: "${userText}"`
       : userText;
       
-    const userEmail = await getUserEmail();
+    const userEmail = await getUserEmail(chatId);
 
     if (intent === 7) {
       finalQuery += `\n\nAnalyze the provided emails. Identify any important emails that are from a personal sender (not automated, no-reply, business, or marketing).
@@ -442,7 +442,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
             const subject = parts[3];
             const body = parts.slice(4).join("|");
             if (command === "reply") {
-              await sendEmail(to, subject, body, threadId, inReplyTo);
+              await sendEmail(chatId, to, subject, body, threadId, inReplyTo);
               replyText = `✅ Email sent successfully to ${to}!`;
             } else if (command === "preview") {
               PENDING_EMAILS.set(chatId, { to, subject, body, threadId, inReplyTo });
@@ -452,7 +452,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
             const [to, subject, ...bodyParts] = parts;
             const body = bodyParts.join("|");
             if (command === "reply") {
-              await sendEmail(to, subject, body);
+              await sendEmail(chatId, to, subject, body);
               replyText = `✅ Email sent successfully to ${to}!`;
             } else if (command === "preview") {
               PENDING_EMAILS.set(chatId, { to, subject, body, threadId: null, inReplyTo: null });
