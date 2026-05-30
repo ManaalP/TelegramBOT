@@ -1,0 +1,21 @@
+{
+  "name": "gmail-telegram-assistant",
+  "version": "2.0.0",
+  "description": "Personal finance & booking assistant via Telegram + Gmail + Gemini",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.106.2",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
+    "googleapis": "^137.0.0",
+    "redis": "^6.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}
