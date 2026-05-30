@@ -16,20 +16,30 @@ const { google }       = require("googleapis");
 const router = express.Router();
 
 async function checkLimit(chatId) {
-  const today = dateIST().replace(/\//g, "-");
-  const key = `daily:${chatId}:${today}`;
-  const count = await redisClient.incr(key);
-  if (count === 1) await redisClient.expire(key, 86400 * 2); // 2 days TTL
-  return count <= USER_DAILY_LIMIT;
+  try {
+    const today = dateIST().replace(/\//g, "-");
+    const key = `daily:${chatId}:${today}`;
+    const count = await redisClient.incr(key);
+    if (count === 1) await redisClient.expire(key, 86400 * 2); // 2 days TTL
+    return count <= USER_DAILY_LIMIT;
+  } catch (err) {
+    console.error("Redis error in checkLimit:", err.message);
+    return true; // Bypass daily limit if Redis is down
+  }
 }
 
 const RATE_LIMIT_MS = 3000; // 3 seconds cooldown
 async function checkRateLimit(chatId) {
-  const key = `ratelimit:${chatId}`;
-  const isLimited = await redisClient.get(key);
-  if (isLimited) return false;
-  await redisClient.setEx(key, Math.ceil(RATE_LIMIT_MS / 1000), "1");
-  return true;
+  try {
+    const key = `ratelimit:${chatId}`;
+    const isLimited = await redisClient.get(key);
+    if (isLimited) return false;
+    await redisClient.setEx(key, Math.ceil(RATE_LIMIT_MS / 1000), "1");
+    return true;
+  } catch (err) {
+    console.error("Redis error in checkRateLimit:", err.message);
+    return true; // Bypass cooldown if Redis is down
+  }
 }
 
 const PENDING_EMAILS = new Map();

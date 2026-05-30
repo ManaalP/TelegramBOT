@@ -3,7 +3,7 @@ const { REDIS_URL } = require("../config");
 
 const redisClient = createClient({
   url: REDIS_URL,
-  pingInterval: 60000 // Send a background PING every 60 seconds to keep the socket alive
+  pingInterval: 30000 // Send a background PING every 30 seconds
 });
 
 redisClient.on("error", (err) => console.error("❌ Redis Client Error:", err));

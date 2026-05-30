@@ -24,7 +24,9 @@ function log(key, obj) {
   
   const encryptedData = encrypt(JSON.stringify(obj));
   supabase.from("logs").insert([{ chat_id: chatId, log_type: key, encrypted_data: encryptedData }])
-    .catch(err => console.error("[supabase logger error]", err.message));
+    .then(({ error }) => {
+      if (error) console.error("[supabase logger error]", error.message);
+    });
 }
 
 module.exports = { log };
