@@ -227,17 +227,18 @@ The user just said: "${userText}"
 Task:
 Determine if this new message is a direct analytical follow-up that should be answered using the SAME data context (emails/calendar) that was already fetched. (e.g., filtering, calculating, summarizing, or asking a question about the previous results).
 - If the user is asking to PERFORM AN ACTION (like replying to an email, sending an email, creating/updating/deleting/rsvping an event), DO NOT reuse.
-- If YES (it is an informational follow-up about the fetched data, like "how much did I spend on protein?" after pulling Amazon orders), reply EXACTLY with the word: REUSE
+- If YES (it is an informational follow-up about the fetched data, like asking for counts, totals, or details of items already mentioned in the conversation history), reply EXACTLY with the word: REUSE
 - If NO (it is a new topic, an action request, or requires fetching new data), rewrite the user's message into a self-contained standalone query incorporating missing context, and reply EXACTLY with: NEW: <standalone_query>
 `;
       const aiResponse = await llm.invoke([new SystemMessage(followUpPrompt)]);
       const textResponse = aiResponse.content.trim();
       
-      if (textResponse.includes("REUSE")) {
+      if (textResponse.toUpperCase().includes("REUSE")) {
         isFollowUp = true;
         console.log(`[LangChain Memory] Chat ${chatId}: Detected Follow-Up. Reusing data.`);
-      } else if (textResponse.includes("NEW:")) {
-        standaloneQuery = textResponse.substring(textResponse.indexOf("NEW:") + 4).trim();
+      } else if (textResponse.toUpperCase().includes("NEW:")) {
+        const matchIdx = textResponse.toUpperCase().indexOf("NEW:");
+        standaloneQuery = textResponse.substring(matchIdx + 4).trim();
         console.log(`[LangChain Memory] Chat ${chatId}: Standalone Query -> ${standaloneQuery}`);
       }
     } catch (err) {
@@ -461,10 +462,14 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
     });
     log("sessions", session);
 
-    let replyText = formatAnswer(answer, intent, userText, meta.included);
-
-    if (intent === 8 || intent === 9 || intent === 10) {
-      replyText = answer;
+    let replyText;
+    if (isFollowUp) {
+      replyText = `🧠 *Answered from recent context:*\n\n${answer}`;
+    } else {
+      replyText = formatAnswer(answer, intent, userText, meta.included);
+      if (intent === 8 || intent === 9 || intent === 10) {
+        replyText = answer;
+      }
     }
 
     // Auto-execute AI generated commands
