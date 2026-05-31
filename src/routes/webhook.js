@@ -95,7 +95,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       state: chatId.toString(),
     });
 
-    await tg(chatId, `Welcome! To use this bot, please connect your Google account by clicking the link below:\n\nLogin with Google`);
+    await tg(chatId, `Welcome! To use this bot, please connect your Google account by clicking the link below:\n\n${authUrl}`);
     return;
   }
 
