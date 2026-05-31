@@ -1,5 +1,5 @@
 const express = require("express");
-const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET } = require("../config");
+const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET, BASE_URL } = require("../config");
 const { resolveQuery } = require("../gemini/router");
 const { analyse }      = require("../gemini/analyser");
 const { fetchEmails, getUserEmail }  = require("../gmail/fetcher");
@@ -80,7 +80,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
   const { data: userAuth } = await supabase.from("users").select("refresh_token").eq("chat_id", chatId).single();
   
   if (!userAuth || !userAuth.refresh_token) {
-    const redirectUri = `https://${req.get('host')}/oauth2callback`;
+    const redirectUri = `${BASE_URL}/oauth2callback`;
     const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
     const SCOPES = [
       "https://www.googleapis.com/auth/gmail.readonly",

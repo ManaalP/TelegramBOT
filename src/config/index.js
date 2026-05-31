@@ -2,6 +2,7 @@ require("dotenv").config();
 
 module.exports = {
   PORT:           process.env.PORT || 3000,
+  BASE_URL:       process.env.BASE_URL || "https://telegrambot-pkm0.onrender.com",
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   CLIENT_ID:      process.env.CLIENT_ID,

@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express      = require("express");
 const { google }   = require("googleapis");
-const { PORT, CLIENT_ID, CLIENT_SECRET } = require("./src/config");
+const { PORT, CLIENT_ID, CLIENT_SECRET, BASE_URL } = require("./src/config");
 const webhookRoute = require("./src/routes/webhook");
 const supabase     = require("./src/utils/supabase");
 
@@ -14,7 +14,7 @@ app.get("/oauth2callback", async (req, res) => {
   if (!code || !chatId) return res.status(400).send("Missing code or state (chatId).");
 
   try {
-    const redirectUri = `https://${req.get('host')}/oauth2callback`;
+    const redirectUri = `${BASE_URL}/oauth2callback`;
     const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, redirectUri);
     
     const { tokens } = await oauth2Client.getToken(code);
