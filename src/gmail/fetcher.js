@@ -3,8 +3,10 @@ const { EMAIL_CACHE_TTL, CLIENT_ID, CLIENT_SECRET, KNOWN_SENDERS, MAX_THREADS, M
 const { toIST }       = require("../utils/helpers");
 const { extractBody } = require("./bodyExtractor");
 const { cleanBody }   = require("./bodyCleaner");
-const redisClient     = require("../utils/redis");
 const supabase        = require("../utils/supabase");
+
+const RAM_EMAIL_CACHE = new Map();
+const RAM_THREAD_CACHE = new Map();
 
 async function getGmailClient(chatId) {
   const { data, error } = await supabase.from("users").select("refresh_token").eq("chat_id", chatId).single();
@@ -22,30 +24,20 @@ const BOOKING_RE   = /(booking|ticket|reservation|confirmed|invitation|invite|it
 const STATEMENT_RE  = /(statement|e-?statement|credit\s*card\s*statement|billing\s*statement|monthly\s*statement|your.*statement|statement.*period|amount\s*due|minimum\s*due|payment\s*due|total\s*due|outstanding|closing\s*balance)/i;
 
 async function emailCacheGet(key) {
-  try {
-    const v = await redisClient.get(`email:${key}`);
-    if (v) return JSON.parse(v);
-  } catch (e) { console.error("Redis error", e); }
-  return null;
+  return RAM_EMAIL_CACHE.get(`email:${key}`) || null;
 }
 async function emailCacheSet(key, data) {
-  try {
-    await redisClient.setEx(`email:${key}`, Math.floor(EMAIL_CACHE_TTL / 1000), JSON.stringify(data));
-  } catch (e) { console.error("Redis error", e); }
+  RAM_EMAIL_CACHE.set(`email:${key}`, data);
+  setTimeout(() => RAM_EMAIL_CACHE.delete(`email:${key}`), EMAIL_CACHE_TTL);
 }
 
 async function getThreadFromCache(id, historyId) {
-  try {
-    const v = await redisClient.get(`thread:${id}:${historyId}`);
-    if (v) return JSON.parse(v);
-  } catch (e) { console.error("Redis error", e); }
-  return null;
+  return RAM_THREAD_CACHE.get(`thread:${id}:${historyId}`) || null;
 }
 async function setThreadToCache(id, historyId, data) {
-  try {
-    // Cache heavily-detailed threads for 7 days
-    await redisClient.setEx(`thread:${id}:${historyId}`, 7 * 24 * 60 * 60, JSON.stringify(data));
-  } catch (e) { console.error("Redis error", e); }
+  const cacheKey = `thread:${id}:${historyId}`;
+  RAM_THREAD_CACHE.set(cacheKey, data);
+  setTimeout(() => RAM_THREAD_CACHE.delete(cacheKey), 7 * 24 * 60 * 60 * 1000);
 }
 
 const cachedUserEmails = new Map();

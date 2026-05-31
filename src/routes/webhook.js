@@ -11,54 +11,46 @@ const { getUpcomingEvents, createCalendarEvent, updateCalendarEvent, deleteCalen
 const { sendEmail }    = require("../gmail/sender");
 const { log }          = require("../utils/logger");
 const { nowIST, dateIST } = require("../utils/helpers");
-const redisClient      = require("../utils/redis");
 const supabase         = require("../utils/supabase");
 const { google }       = require("googleapis");
 
 const router = express.Router();
 
+const RAM_DAILY = new Map();
+const RAM_RATE = new Map();
+const RAM_MEMORY = new Map();
+
 async function checkLimit(chatId) {
-  try {
     const today = dateIST().replace(/\//g, "-");
     const key = `daily:${chatId}:${today}`;
-    const count = await redisClient.incr(key);
-    if (count === 1) await redisClient.expire(key, 86400 * 2); // 2 days TTL
+    const count = (RAM_DAILY.get(key) || 0) + 1;
+    RAM_DAILY.set(key, count);
     return count <= USER_DAILY_LIMIT;
-  } catch (err) {
-    console.error("Redis error in checkLimit:", err.message);
-    return true; // Bypass daily limit if Redis is down
-  }
 }
 
 const RATE_LIMIT_MS = 3000; // 3 seconds cooldown
 async function checkRateLimit(chatId) {
-  try {
     const key = `ratelimit:${chatId}`;
-    const isLimited = await redisClient.get(key);
-    if (isLimited) return false;
-    await redisClient.setEx(key, Math.ceil(RATE_LIMIT_MS / 1000), "1");
+    if (RAM_RATE.has(key)) return false;
+    RAM_RATE.set(key, true);
+    setTimeout(() => RAM_RATE.delete(key), RATE_LIMIT_MS);
     return true;
-  } catch (err) {
-    console.error("Redis error in checkRateLimit:", err.message);
-    return true; // Bypass cooldown if Redis is down
-  }
 }
 
 const MAX_HISTORY = 6;
 
-// Helper functions for Redis Session Memory
+// Helper functions for RAM Session Memory
 async function getMemory(key, chatId, defaultVal) {
-  try {
-    const v = await redisClient.get(`${key}:${chatId}`);
-    return v ? JSON.parse(v) : defaultVal;
-  } catch { return defaultVal; }
+  const v = RAM_MEMORY.get(`${key}:${chatId}`);
+  return v !== undefined ? v : defaultVal;
 }
 async function setMemory(key, chatId, val, ttl = 3600) {
-  try { await redisClient.setEx(`${key}:${chatId}`, ttl, JSON.stringify(val)); }
-  catch (e) { console.error("Redis session save error:", e.message); }
+  const fullKey = `${key}:${chatId}`;
+  RAM_MEMORY.set(fullKey, val);
+  setTimeout(() => RAM_MEMORY.delete(fullKey), ttl * 1000); // Auto-clear after TTL
 }
 async function delMemory(key, chatId) {
-  try { await redisClient.del(`${key}:${chatId}`); } catch {}
+  RAM_MEMORY.delete(`${key}:${chatId}`);
 }
 
 const GREETINGS = new Set(["/start", "hi", "hello", "help"]);
@@ -139,7 +131,7 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     } else {
       draft.body = userText.trim();
       await setMemory("draft_email", chatId, draft);
-      await tg(chatId, `📧 **Email Draft Updated**\n\n**To:** ${draft.to}\n**Subject:** ${draft.subject}\n**Message:**\n${draft.body}\n\n*Reply 'okay' to send, 'cancel' to abort, or type another message to overwrite.*`);
+      await tg(chatId, `📧 *Email Draft Updated*\n\n*To:* ${draft.to}\n*Subject:* ${draft.subject}\n*Message:*\n${draft.body}\n\n_Reply 'okay' to send, 'cancel' to abort, or type another message to overwrite._`);
       return;
     }
   }
@@ -462,6 +454,8 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
     // Give the AI knowledge of the cache mechanism
     finalQuery += `\n\n[SYSTEM NOTE: The email and calendar data provided to you is temporarily cached for 60 seconds to improve speed. If the user asks about data freshness, mentions that a recent item is missing, or asks how the cache works, politely inform them about this 1-minute synchronization delay.]`;
 
+    finalQuery += `\n\n[SYSTEM NOTE: Do NOT use markdown formatting like asterisks (**), underscores (_), or backticks (\`) in your conversational text, as it frequently causes Telegram API parsing errors. Provide plain text answers whenever possible.]`;
+
     const { answer, prompt } = await analyse(finalQuery, emailData, intent);
     session.finalAnswer = answer;
     session.outcome     = "success";
@@ -501,7 +495,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
           const guests = parts[6] ? parts[6].split(",").map(g => g.trim()).filter(Boolean) : [];
           await setMemory("draft_event", chatId, { eventId, summary, startTime, endTime, description, createMeet, guests }, 3600);
           const action = eventId ? "Update" : "Create";
-          replyText = `📅 **Event Draft Preview (${action})**\n\n**Title:** ${summary}\n**Time:** ${startTime} to ${endTime}\n**Google Meet:** ${createMeet ? "Yes" : "No"}\n**Guests:** ${guests.join(", ") || "None"}\n**Description:**\n${description || "None"}\n\n*Reply 'okay' to confirm and save, or 'cancel' to abort.*`;
+          replyText = `📅 *Event Draft Preview (${action})*\n\n*Title:* ${summary}\n*Time:* ${startTime} to ${endTime}\n*Google Meet:* ${createMeet ? "Yes" : "No"}\n*Guests:* ${guests.join(", ") || "None"}\n*Description:*\n${description || "None"}\n\n_Reply 'okay' to confirm and save, or 'cancel' to abort._`;
         }
       } else if (matchDelete) {
         try {
@@ -538,7 +532,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
               replyText = `✅ Email sent successfully to ${to}!`;
             } else if (command === "preview") {
               await setMemory("draft_email", chatId, { to, subject, body, threadId, inReplyTo }, 3600);
-              replyText = `📧 **Email Draft Preview**\n\n**To:** ${to}\n**Subject:** ${subject}\n**Message:**\n${body}\n\n*Reply 'okay' to send this email, 'cancel' to abort, or simply type a new message to overwrite the draft.*`;
+              replyText = `📧 *Email Draft Preview*\n\n*To:* ${to}\n*Subject:* ${subject}\n*Message:*\n${body}\n\n_Reply 'okay' to send this email, 'cancel' to abort, or simply type a new message to overwrite the draft._`;
             }
           } else if (parts.length >= 3) {
             const [to, subject, ...bodyParts] = parts;
@@ -548,7 +542,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
               replyText = `✅ Email sent successfully to ${to}!`;
             } else if (command === "preview") {
               await setMemory("draft_email", chatId, { to, subject, body, threadId: null, inReplyTo: null }, 3600);
-              replyText = `📧 **Email Draft Preview**\n\n**To:** ${to}\n**Subject:** ${subject}\n**Message:**\n${body}\n\n*Reply 'okay' to send this email, 'cancel' to abort, or simply type a new message to overwrite the draft.*`;
+              replyText = `📧 *Email Draft Preview*\n\n*To:* ${to}\n*Subject:* ${subject}\n*Message:*\n${body}\n\n_Reply 'okay' to send this email, 'cancel' to abort, or simply type a new message to overwrite the draft._`;
             }
           }
         } catch (err) {
@@ -561,7 +555,16 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
       replyText += "\n\n💡 *Note:* _This analysis is based solely on fetched email receipts. Transactions (like direct UPI payments) that do not generate an email alert cannot be counted._";
     }
 
-    await tg(chatId, replyText);
+    try {
+      await tg(chatId, replyText);
+    } catch (err) {
+      if (err.message && err.message.includes("parse entities")) {
+        console.log(`[Telegram] Stripping formatting due to parse error for chat ${chatId}`);
+        await tg(chatId, replyText.replace(/[*_`\[\]]/g, ""));
+      } else {
+        throw err;
+      }
+    }
 
   // Record state to memory store after a successful response
   history.push({ role: 'user', content: userText });
