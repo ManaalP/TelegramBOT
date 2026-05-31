@@ -94,7 +94,19 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       prompt: "consent",
       state: chatId.toString(),
     });
-    await tg(chatId, `Welcome! To use this bot, please connect your Google account by clicking the link below:\n\nLogin with Google`);
+
+    let shortUrl = authUrl;
+    try {
+      // Shorten the long Google OAuth URL using TinyURL's free API
+      const response = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(authUrl)}`);
+      if (response.ok) {
+        shortUrl = await response.text();
+      }
+    } catch (err) {
+      console.error("URL shortening failed:", err.message);
+    }
+
+    await tg(chatId, `Welcome! To use this bot, please connect your Google account by clicking the link below:\n\n${shortUrl}`);
     return;
   }
 
