@@ -1,19 +1,19 @@
 const { google } = require("googleapis");
 const config = require("../config");
+const supabase = require("../utils/supabase");
 
-// Initialize the OAuth2 client using the existing credentials
-const oAuth2Client = new google.auth.OAuth2(
-  config.CLIENT_ID,
-  config.CLIENT_SECRET
-);
+async function getGmailClient(chatId) {
+  const { data, error } = await supabase.from("users").select("refresh_token").eq("chat_id", chatId).single();
+  if (error || !data || !data.refresh_token) {
+    throw new Error("User not authenticated or missing refresh token.");
+  }
+  const oAuth2Client = new google.auth.OAuth2(config.CLIENT_ID, config.CLIENT_SECRET);
+  oAuth2Client.setCredentials({ refresh_token: data.refresh_token });
+  return google.gmail({ version: "v1", auth: oAuth2Client });
+}
 
-oAuth2Client.setCredentials({
-  refresh_token: config.REFRESH_TOKEN,
-});
-
-const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-
-async function sendEmail(to, subject, text, threadId = null, inReplyTo = null) {
+async function sendEmail(chatId, to, subject, text, threadId = null, inReplyTo = null) {
+  const gmail = await getGmailClient(chatId);
   const messageParts = [
     `To: ${to}`,
     'Content-Type: text/html; charset=utf-8',

@@ -1,13 +1,20 @@
 const { google } = require("googleapis");
-const { EMAIL_CACHE_TTL, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN, KNOWN_SENDERS, MAX_THREADS, MAX_EMAILS } = require("../config");
+const { EMAIL_CACHE_TTL, CLIENT_ID, CLIENT_SECRET, KNOWN_SENDERS, MAX_THREADS, MAX_EMAILS } = require("../config");
 const { toIST }       = require("../utils/helpers");
 const { extractBody } = require("./bodyExtractor");
 const { cleanBody }   = require("./bodyCleaner");
 const redisClient     = require("../utils/redis");
+const supabase        = require("../utils/supabase");
 
-const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET);
-oauth2Client.setCredentials({ refresh_token: REFRESH_TOKEN });
-const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+async function getGmailClient(chatId) {
+  const { data, error } = await supabase.from("users").select("refresh_token").eq("chat_id", chatId).single();
+  if (error || !data || !data.refresh_token) {
+    throw new Error("User not authenticated or missing refresh token.");
+  }
+  const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET);
+  oauth2Client.setCredentials({ refresh_token: data.refresh_token });
+  return google.gmail({ version: "v1", auth: oauth2Client });
+}
 
 const SENDER_NET   = KNOWN_SENDERS.join(" OR ");
 const FINANCIAL_RE = /(\d+[.,]\d{2}|rs\.?|₹|inr|usd|debited|credited|spent|charged|payment|transaction|booking|order|bill|due|statement|invoice|alert|purchase|successful|approved|declined|zomato|swiggy|amazon|flipkart|netflix|spotify|uber|ola|blinkit|bigbasket|phonepe|gpay|paytm|hdfc|icici|sbi|axis|scapia|federal|indusind|kotak|citi|rbl|hsbc|standard\s*chartered|yes\s*bank|american\s*express|amex)/i;
@@ -41,21 +48,23 @@ async function setThreadToCache(id, historyId, data) {
   } catch (e) { console.error("Redis error", e); }
 }
 
-let cachedUserEmail = null;
-async function getUserEmail() {
-  if (cachedUserEmail) return cachedUserEmail;
+const cachedUserEmails = new Map();
+async function getUserEmail(chatId) {
+  if (cachedUserEmails.has(chatId)) return cachedUserEmails.get(chatId);
   try {
+    const gmail = await getGmailClient(chatId);
     const res = await gmail.users.getProfile({ userId: "me" });
-    cachedUserEmail = res.data.emailAddress;
-    return cachedUserEmail;
+    const email = res.data.emailAddress;
+    cachedUserEmails.set(chatId, email);
+    return email;
   } catch (e) {
     console.error("Error fetching user email:", e);
     return "the user";
   }
 }
 
-async function fetchEmails(rawQuery, intent) {
-  const cacheKey = `${intent}:${rawQuery}`;
+async function fetchEmails(chatId, rawQuery, intent) {
+  const cacheKey = `${chatId}:${intent}:${rawQuery}`;
   const cached = await emailCacheGet(cacheKey);
   if (cached) {
     console.log(`[fetch] cache hit for intent:${intent}`);
@@ -65,6 +74,7 @@ async function fetchEmails(rawQuery, intent) {
   const fullQuery = q;
   console.log(`[fetch] ${fullQuery}`);
 
+  const gmail = await getGmailClient(chatId);
   const maxThreads = Math.max(MAX_THREADS, 200);
   const maxEmails = Math.max(MAX_EMAILS, 100);
   const listRes = await gmail.users.threads.list({ userId: "me", q: fullQuery, maxResults: maxThreads });
