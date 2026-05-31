@@ -1,5 +1,7 @@
 const express = require("express");
-const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET, BASE_URL } = require("../config");
+const { ChatGoogleGenerativeAI } = require("@langchain/google-genai");
+const { SystemMessage } = require("@langchain/core/messages");
+const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET, BASE_URL, GEMINI_API_KEY, GEMINI_MODEL } = require("../config");
 const { resolveQuery } = require("../gemini/router");
 const { analyse }      = require("../gemini/analyser");
 const { fetchEmails, getUserEmail }  = require("../gmail/fetcher");
@@ -45,6 +47,8 @@ async function checkRateLimit(chatId) {
 const PENDING_EMAILS = new Map();
 const PENDING_EVENTS = new Map();
 const LAST_FETCHED_DATA = new Map();
+const CHAT_HISTORY = new Map();
+const MAX_HISTORY = 6;
 
 const GREETINGS = new Set(["/start", "hi", "hello", "help"]);
 
@@ -198,15 +202,63 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     // Fallthrough to AI if format is not strict
   }
 
-    let router_result;
+  let history = CHAT_HISTORY.get(chatId) || [];
+  let isFollowUp = false;
+  let standaloneQuery = userText;
+
+  // LangChain Conversation Context Interceptor
+  if (history.length > 0 && LAST_FETCHED_DATA.has(chatId)) {
     try {
-      router_result = await resolveQuery(userText);
+      const llm = new ChatGoogleGenerativeAI({
+        modelName: GEMINI_MODEL || "gemini-3.5-flash",
+        apiKey: GEMINI_API_KEY,
+        temperature: 0.1
+      });
+      
+      let contextStr = history.map(h => `${h.role === 'user' ? 'User' : 'Bot'}: ${h.content}`).join("\n");
+      const followUpPrompt = `
+You are a conversational routing assistant. Below is the recent conversation history with the user:
+---
+${contextStr}
+---
+
+The user just said: "${userText}"
+
+Task:
+Determine if this new message is a direct analytical follow-up that should be answered using the SAME data context (emails/calendar) that was already fetched. (e.g., filtering, calculating, summarizing, or asking a question about the previous results).
+- If the user is asking to PERFORM AN ACTION (like replying to an email, sending an email, creating/updating/deleting/rsvping an event), DO NOT reuse.
+- If YES (it is an informational follow-up about the fetched data, like "how much did I spend on protein?" after pulling Amazon orders), reply EXACTLY with the word: REUSE
+- If NO (it is a new topic, an action request, or requires fetching new data), rewrite the user's message into a self-contained standalone query incorporating missing context, and reply EXACTLY with: NEW: <standalone_query>
+`;
+      const aiResponse = await llm.invoke([new SystemMessage(followUpPrompt)]);
+      const textResponse = aiResponse.content.trim();
+      
+      if (textResponse.includes("REUSE")) {
+        isFollowUp = true;
+        console.log(`[LangChain Memory] Chat ${chatId}: Detected Follow-Up. Reusing data.`);
+      } else if (textResponse.includes("NEW:")) {
+        standaloneQuery = textResponse.substring(textResponse.indexOf("NEW:") + 4).trim();
+        console.log(`[LangChain Memory] Chat ${chatId}: Standalone Query -> ${standaloneQuery}`);
+      }
+    } catch (err) {
+      console.error("LangChain context analysis error:", err.message);
+    }
+  }
+
+    let router_result;
+  if (isFollowUp) {
+    const lastData = LAST_FETCHED_DATA.get(chatId);
+    router_result = { intent: lastData.intent, query: "REUSE_DATA", source: "langchain_memory" };
+  } else {
+    try {
+      router_result = await resolveQuery(standaloneQuery);
     } catch (parseErr) {
       session.outcome = "error_router_parse";
       log("sessions", session);
       await tg(chatId, "⚠️ Couldn't understand your request. Please try rephrasing it.");
       return;
     }
+  }
 
   let { intent, query, source } = router_result;
     session.intent      = intent;
@@ -249,7 +301,11 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     }
 
     let emailData, meta;
-    if (intent === 8 && gmailSearchQuery === "label:^none" && LAST_FETCHED_DATA.has(chatId)) {
+  if (isFollowUp) {
+    const lastData = LAST_FETCHED_DATA.get(chatId);
+    emailData = lastData.emailData;
+    meta = lastData.meta;
+  } else if (intent === 8 && gmailSearchQuery === "label:^none" && LAST_FETCHED_DATA.has(chatId)) {
       const last = LAST_FETCHED_DATA.get(chatId);
       emailData = last.emailData;
       meta = last.meta;
@@ -257,15 +313,12 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       const fetchRes = await fetchEmails(chatId, gmailSearchQuery, intent);
       emailData = fetchRes.emailData;
       meta = fetchRes.meta;
-      if (intent !== 8 && intent !== 9 && intent !== 10) {
-        LAST_FETCHED_DATA.set(chatId, { emailData, meta });
-      }
     }
 
     let hasCalendarEvents = false;
 
     // Check for calendar events for Bookings (3) or Setup Invite (9)
-    if (intent === 3 || intent === 9) {
+  if (!isFollowUp && (intent === 3 || intent === 9)) {
       try {
         console.log("🔍 Fetching Google Calendar events...");
         const events = await getUpcomingEvents(chatId, 10);
@@ -289,7 +342,13 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       } catch (error) {
         console.error("❌ Failed to fetch calendar events:", error.message);
       }
-    }
+  } else if (isFollowUp) {
+    hasCalendarEvents = LAST_FETCHED_DATA.get(chatId).hasCalendarEvents || false;
+  }
+
+  if (!isFollowUp && intent !== 8 && intent !== 9 && intent !== 10) {
+    LAST_FETCHED_DATA.set(chatId, { emailData, meta, intent, hasCalendarEvents });
+  }
 
     session.gmailQueryUsed = meta.gmailQuery;
     session.emailFetchMeta = meta;
@@ -314,9 +373,11 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
 
     // If we have calendar data, we need to give the AI a more specific prompt
     // so it knows to look at both emails and calendar events.
-    let finalQuery = hasCalendarEvents
-      ? `Based on the following email and calendar data, please answer this question: "${userText}"`
-      : userText;
+  let finalQuery = isFollowUp
+    ? `Conversation History:\n${history.map(h => `${h.role === 'user' ? 'User' : 'Bot'}: ${h.content}`).join("\n")}\n\nBased on the previously provided email and calendar data and the conversation history above, answer this follow-up question: "${userText}"`
+    : (hasCalendarEvents
+      ? `Based on the following email and calendar data, please answer this question: "${standaloneQuery}"`
+      : standaloneQuery);
       
     const userEmail = await getUserEmail(chatId);
 
@@ -480,7 +541,17 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
       }
     }
 
+    if (intent === 4 || intent === 6) {
+      replyText += "\n\n💡 *Note:* _This analysis is based solely on fetched email receipts. Transactions (like direct UPI payments) that do not generate an email alert cannot be counted._";
+    }
+
     await tg(chatId, replyText);
+
+  // Record state to memory store after a successful response
+  history.push({ role: 'user', content: userText });
+  history.push({ role: 'bot', content: answer });
+  if (history.length > MAX_HISTORY) history = history.slice(history.length - MAX_HISTORY);
+  CHAT_HISTORY.set(chatId, history);
 
   } catch (err) {
     console.error("[webhook]", err);
