@@ -6,7 +6,7 @@ async function tg(chatId, text, retries = 3) {
       const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text }),
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
       });
       if (!response.ok) {
         const errText = await response.text();
