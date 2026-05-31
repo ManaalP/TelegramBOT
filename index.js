@@ -22,7 +22,12 @@ app.get("/oauth2callback", async (req, res) => {
       return res.send("Error: No refresh token returned. Please revoke access in your Google Account and try again.");
     }
 
-    await supabase.from("users").upsert({ chat_id: chatId, refresh_token: tokens.refresh_token });
+    const { error } = await supabase.from("users").upsert({ chat_id: chatId, refresh_token: tokens.refresh_token });
+    
+    if (error) {
+      console.error("Supabase Save Error:", error);
+      return res.status(500).send(`❌ Failed to save to database: ${error.message}`);
+    }
     
     res.send("✅ Authentication successful! You can close this window and return to Telegram.");
   } catch (err) {
