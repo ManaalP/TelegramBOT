@@ -1,13 +1,17 @@
 require("dotenv").config();
 const express      = require("express");
 const { google }   = require("googleapis");
-const { PORT, CLIENT_ID, CLIENT_SECRET, BASE_URL } = require("./src/config");
+const { PORT, CLIENT_ID, CLIENT_SECRET, BASE_URL, GEMINI_API_KEY } = require("./src/config");
 const webhookRoute = require("./src/routes/webhook");
 const supabase     = require("./src/utils/supabase");
 
 const app = express();
 app.use(express.json());
 app.use(webhookRoute);
+
+if (!GEMINI_API_KEY) {
+  console.error("❌ CRITICAL WARNING: GEMINI_API_KEY is missing from environment variables! AI features will not work.");
+}
 
 app.get("/oauth2callback", async (req, res) => {
   const { code, state: chatId } = req.query;
