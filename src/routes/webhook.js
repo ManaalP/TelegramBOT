@@ -1,7 +1,7 @@
 const express = require("express");
 const { ChatGoogleGenerativeAI } = require("@langchain/google-genai");
 const { SystemMessage } = require("@langchain/core/messages");
-const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET, BASE_URL, GEMINI_API_KEY, GEMINI_MODEL } = require("../config");
+const { TELEGRAM_TOKEN, USER_DAILY_LIMIT, CLIENT_ID, CLIENT_SECRET, BASE_URL, GEMINI_API_KEY, GEMINI_MODEL, FALLBACK_MODELS } = require("../config");
 const { resolveQuery } = require("../gemini/router");
 const { analyse }      = require("../gemini/analyser");
 const { fetchEmails, getUserEmail }  = require("../gmail/fetcher");
@@ -215,12 +215,6 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
   // LangChain Conversation Context Interceptor
   if (history.length > 0 && lastFetchedData) {
     try {
-      const llm = new ChatGoogleGenerativeAI({
-        modelName: GEMINI_MODEL || "gemini-3.5-flash",
-        apiKey: GEMINI_API_KEY,
-        temperature: 0.1
-      });
-      
       let contextStr = history.map(h => `${h.role === 'user' ? 'User' : 'Bot'}: ${h.content}`).join("\n");
       const followUpPrompt = `
 You are a context-routing AI. You decide if a user's new message can be answered using the data already fetched in the previous turn, or if new data needs to be fetched.
@@ -242,7 +236,26 @@ Output Format:
 - If you should reuse the data, output EXACTLY the word: REUSE
 - If you must fetch new data, rewrite the message into a standalone search query and output: NEW: <standalone_query>
 `;
-      const aiResponse = await llm.invoke([new SystemMessage(followUpPrompt)]);
+
+      const modelsToTry = (FALLBACK_MODELS && FALLBACK_MODELS.length > 0) ? FALLBACK_MODELS : [GEMINI_MODEL || "gemini-3.5-flash"];
+      let aiResponse = null;
+
+      for (let i = 0; i < modelsToTry.length; i++) {
+        try {
+          const llm = new ChatGoogleGenerativeAI({
+            modelName: modelsToTry[i],
+            apiKey: GEMINI_API_KEY,
+            temperature: 0.1
+          });
+          aiResponse = await llm.invoke(followUpPrompt);
+          break; // Break the loop on success
+        } catch (err) {
+          console.warn(`[LangChain Memory] Model ${modelsToTry[i]} failed: ${err.message}`);
+          if (i === modelsToTry.length - 1) throw err;
+          await new Promise(r => setTimeout(r, 1500)); // Delay before trying next fallback model
+        }
+      }
+
       const textResponse = aiResponse.content.trim();
       
       if (textResponse.toUpperCase().includes("REUSE")) {

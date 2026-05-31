@@ -24,18 +24,18 @@ function rulesQuery(text) {
   const dynamicYears = t.match(/\b(?:last|past|in\s*the\s*last)?\s*(\d+)\s*years?\b/);
 
   if (dynamicDays) {
-    time = `newer_than:${parseInt(dynamicDays[1]) + 1}d`;
+    time = `newer_than:${parseInt(dynamicDays[1])}d`;
   } else if (dynamicMonths) {
-    time = `newer_than:${parseInt(dynamicMonths[1]) * 30 + 2}d`;
+    time = `newer_than:${parseInt(dynamicMonths[1]) * 30}d`;
   } else if (dynamicYears) {
-    time = `newer_than:${parseInt(dynamicYears[1]) * 365 + 1}d`;
-  } else if (/\b(today|24\s*h(ours?)?|last\s*24)\b/.test(t)) time = "newer_than:2d";
-  else if (/\b(48\s*h(ours?)?|last\s*48|yesterday)\b/.test(t)) time = "newer_than:3d";
-  else if (/\b(week|last\s*week)\b/.test(t)) time = "newer_than:8d";
-  else if (/\b(month|this\s*month|last\s*month)\b/.test(t)) time = "newer_than:32d";
-  else if (/\b(quarter)\b/.test(t)) time = "newer_than:92d";
-  else if (/\b(half\s*year)\b/.test(t)) time = "newer_than:183d";
-  else if (/\b(year|last\s*year)\b/.test(t)) time = "newer_than:366d";
+    time = `newer_than:${parseInt(dynamicYears[1]) * 365}d`;
+  } else if (/\b(today|24\s*h(ours?)?|last\s*24)\b/.test(t)) time = "newer_than:1d";
+  else if (/\b(48\s*h(ours?)?|last\s*48|yesterday)\b/.test(t)) time = "newer_than:2d";
+  else if (/\b(week|last\s*week)\b/.test(t)) time = "newer_than:7d";
+  else if (/\b(month|this\s*month|last\s*month)\b/.test(t)) time = "newer_than:30d";
+  else if (/\b(quarter)\b/.test(t)) time = "newer_than:90d";
+  else if (/\b(half\s*year)\b/.test(t)) time = "newer_than:180d";
+  else if (/\b(year|last\s*year)\b/.test(t)) time = "newer_than:365d";
 
   const BROAD_TXN     = `(subject:debited OR subject:credited OR subject:transaction OR subject:payment OR subject:"transaction was successful" OR subject:alert OR subject:UPI)`;
   const BROAD_BOOKING = `(subject:booking OR subject:ticket OR subject:reservation OR subject:confirmed OR subject:invitation OR subject:"your booking" OR subject:"trip details" OR from:calendar-notification@google.com)`;
