@@ -44,11 +44,22 @@ async function checkRateLimit(chatId) {
   }
 }
 
-const PENDING_EMAILS = new Map();
-const PENDING_EVENTS = new Map();
-const LAST_FETCHED_DATA = new Map();
-const CHAT_HISTORY = new Map();
 const MAX_HISTORY = 6;
+
+// Helper functions for Redis Session Memory
+async function getMemory(key, chatId, defaultVal) {
+  try {
+    const v = await redisClient.get(`${key}:${chatId}`);
+    return v ? JSON.parse(v) : defaultVal;
+  } catch { return defaultVal; }
+}
+async function setMemory(key, chatId, val, ttl = 3600) {
+  try { await redisClient.setEx(`${key}:${chatId}`, ttl, JSON.stringify(val)); }
+  catch (e) { console.error("Redis session save error:", e.message); }
+}
+async function delMemory(key, chatId) {
+  try { await redisClient.del(`${key}:${chatId}`); } catch {}
+}
 
 const GREETINGS = new Set(["/start", "hi", "hello", "help"]);
 
@@ -108,8 +119,9 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
   }
 
   // --- DRAFT INTERCEPTION LOGIC ---
-  if (PENDING_EMAILS.has(chatId)) {
-    const draft = PENDING_EMAILS.get(chatId);
+  const pendingEmail = await getMemory("draft_email", chatId, null);
+  if (pendingEmail) {
+    const draft = pendingEmail;
     const lowerText = userText.trim().toLowerCase();
     if (['okay', 'ok', 'yes', 'send', 'send it', 'looks good'].includes(lowerText)) {
       try {
@@ -118,23 +130,24 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       } catch (err) {
         await tg(chatId, "❌ Failed to send email: " + err.message);
       }
-      PENDING_EMAILS.delete(chatId);
+      await delMemory("draft_email", chatId);
       return;
     } else if (['cancel', 'abort', 'no', 'stop'].includes(lowerText)) {
-      PENDING_EMAILS.delete(chatId);
+      await delMemory("draft_email", chatId);
       await tg(chatId, "🚫 Email cancelled.");
       return;
     } else {
       draft.body = userText.trim();
-      PENDING_EMAILS.set(chatId, draft);
+      await setMemory("draft_email", chatId, draft);
       await tg(chatId, `📧 **Email Draft Updated**\n\n**To:** ${draft.to}\n**Subject:** ${draft.subject}\n**Message:**\n${draft.body}\n\n*Reply 'okay' to send, 'cancel' to abort, or type another message to overwrite.*`);
       return;
     }
   }
 
   // --- CALENDAR DRAFT INTERCEPTION LOGIC ---
-  if (PENDING_EVENTS.has(chatId)) {
-    const draft = PENDING_EVENTS.get(chatId);
+  const pendingEvent = await getMemory("draft_event", chatId, null);
+  if (pendingEvent) {
+    const draft = pendingEvent;
     const lowerText = userText.trim().toLowerCase();
     if (['okay', 'ok', 'yes', 'send', 'create', 'update', 'looks good'].includes(lowerText)) {
       try {
@@ -149,14 +162,14 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       } catch (err) {
         await tg(chatId, "❌ Failed to process calendar event: " + err.message);
       }
-      PENDING_EVENTS.delete(chatId);
+      await delMemory("draft_event", chatId);
       return;
     } else if (['cancel', 'abort', 'no', 'stop'].includes(lowerText)) {
-      PENDING_EVENTS.delete(chatId);
+      await delMemory("draft_event", chatId);
       await tg(chatId, "🚫 Calendar event action cancelled.");
       return;
     } else {
-      PENDING_EVENTS.delete(chatId);
+      await delMemory("draft_event", chatId);
       await tg(chatId, "⏳ Re-drafting event based on new instructions...");
       // Fallthrough to AI to re-evaluate userText
     }
@@ -202,12 +215,13 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
     // Fallthrough to AI if format is not strict
   }
 
-  let history = CHAT_HISTORY.get(chatId) || [];
+  let history = await getMemory("chat_history", chatId, []);
+  let lastFetchedData = await getMemory("last_data", chatId, null);
   let isFollowUp = false;
   let standaloneQuery = userText;
 
   // LangChain Conversation Context Interceptor
-  if (history.length > 0 && LAST_FETCHED_DATA.has(chatId)) {
+  if (history.length > 0 && lastFetchedData) {
     try {
       const llm = new ChatGoogleGenerativeAI({
         modelName: GEMINI_MODEL || "gemini-3.5-flash",
@@ -248,8 +262,7 @@ Determine if this new message is a direct analytical follow-up that should be an
 
     let router_result;
   if (isFollowUp) {
-    const lastData = LAST_FETCHED_DATA.get(chatId);
-    router_result = { intent: lastData.intent, query: "REUSE_DATA", source: "langchain_memory" };
+    router_result = { intent: lastFetchedData.intent, query: "REUSE_DATA", source: "langchain_memory" };
   } else {
     try {
       router_result = await resolveQuery(standaloneQuery);
@@ -303,13 +316,11 @@ Determine if this new message is a direct analytical follow-up that should be an
 
     let emailData, meta;
   if (isFollowUp) {
-    const lastData = LAST_FETCHED_DATA.get(chatId);
-    emailData = lastData.emailData;
-    meta = lastData.meta;
-  } else if (intent === 8 && gmailSearchQuery === "label:^none" && LAST_FETCHED_DATA.has(chatId)) {
-      const last = LAST_FETCHED_DATA.get(chatId);
-      emailData = last.emailData;
-      meta = last.meta;
+    emailData = lastFetchedData.emailData;
+    meta = lastFetchedData.meta;
+  } else if (intent === 8 && gmailSearchQuery === "label:^none" && lastFetchedData) {
+      emailData = lastFetchedData.emailData;
+      meta = lastFetchedData.meta;
     } else {
       const fetchRes = await fetchEmails(chatId, gmailSearchQuery, intent);
       emailData = fetchRes.emailData;
@@ -344,11 +355,11 @@ Determine if this new message is a direct analytical follow-up that should be an
         console.error("❌ Failed to fetch calendar events:", error.message);
       }
   } else if (isFollowUp) {
-    hasCalendarEvents = LAST_FETCHED_DATA.get(chatId).hasCalendarEvents || false;
+    hasCalendarEvents = lastFetchedData.hasCalendarEvents || false;
   }
 
   if (!isFollowUp && intent !== 8 && intent !== 9 && intent !== 10) {
-    LAST_FETCHED_DATA.set(chatId, { emailData, meta, intent, hasCalendarEvents });
+    await setMemory("last_data", chatId, { emailData, meta, intent, hasCalendarEvents }, 3600);
   }
 
     session.gmailQueryUsed = meta.gmailQuery;
@@ -488,7 +499,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
           const description = parts[4];
           const createMeet = parts[5] === 'true';
           const guests = parts[6] ? parts[6].split(",").map(g => g.trim()).filter(Boolean) : [];
-          PENDING_EVENTS.set(chatId, { eventId, summary, startTime, endTime, description, createMeet, guests });
+          await setMemory("draft_event", chatId, { eventId, summary, startTime, endTime, description, createMeet, guests }, 3600);
           const action = eventId ? "Update" : "Create";
           replyText = `📅 **Event Draft Preview (${action})**\n\n**Title:** ${summary}\n**Time:** ${startTime} to ${endTime}\n**Google Meet:** ${createMeet ? "Yes" : "No"}\n**Guests:** ${guests.join(", ") || "None"}\n**Description:**\n${description || "None"}\n\n*Reply 'okay' to confirm and save, or 'cancel' to abort.*`;
         }
@@ -526,7 +537,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
               await sendEmail(chatId, to, subject, body, threadId, inReplyTo);
               replyText = `✅ Email sent successfully to ${to}!`;
             } else if (command === "preview") {
-              PENDING_EMAILS.set(chatId, { to, subject, body, threadId, inReplyTo });
+              await setMemory("draft_email", chatId, { to, subject, body, threadId, inReplyTo }, 3600);
               replyText = `📧 **Email Draft Preview**\n\n**To:** ${to}\n**Subject:** ${subject}\n**Message:**\n${body}\n\n*Reply 'okay' to send this email, 'cancel' to abort, or simply type a new message to overwrite the draft.*`;
             }
           } else if (parts.length >= 3) {
@@ -536,7 +547,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
               await sendEmail(chatId, to, subject, body);
               replyText = `✅ Email sent successfully to ${to}!`;
             } else if (command === "preview") {
-              PENDING_EMAILS.set(chatId, { to, subject, body, threadId: null, inReplyTo: null });
+              await setMemory("draft_email", chatId, { to, subject, body, threadId: null, inReplyTo: null }, 3600);
               replyText = `📧 **Email Draft Preview**\n\n**To:** ${to}\n**Subject:** ${subject}\n**Message:**\n${body}\n\n*Reply 'okay' to send this email, 'cancel' to abort, or simply type a new message to overwrite the draft.*`;
             }
           }
@@ -556,7 +567,7 @@ The /preview command must be the VERY LAST thing in your response. Do not add an
   history.push({ role: 'user', content: userText });
   history.push({ role: 'bot', content: answer });
   if (history.length > MAX_HISTORY) history = history.slice(history.length - MAX_HISTORY);
-  CHAT_HISTORY.set(chatId, history);
+  await setMemory("chat_history", chatId, history, 3600);
 
   } catch (err) {
     console.error("[webhook]", err);
