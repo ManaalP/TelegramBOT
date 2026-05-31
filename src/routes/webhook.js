@@ -223,18 +223,24 @@ router.post(`/webhook/${TELEGRAM_TOKEN}`, async (req, res) => {
       
       let contextStr = history.map(h => `${h.role === 'user' ? 'User' : 'Bot'}: ${h.content}`).join("\n");
       const followUpPrompt = `
-You are a conversational routing assistant. Below is the recent conversation history with the user:
+You are a context-routing AI. You decide if a user's new message can be answered using the data already fetched in the previous turn, or if new data needs to be fetched.
+
+Recent conversation history:
 ---
 ${contextStr}
 ---
 
-The user just said: "${userText}"
+User's new message: "${userText}"
 
-Task:
-Determine if this new message is a direct analytical follow-up that should be answered using the SAME data context (emails/calendar) that was already fetched. (e.g., filtering, calculating, summarizing, or asking a question about the previous results).
-- If the user is asking to PERFORM AN ACTION (like replying to an email, sending an email, creating/updating/deleting/rsvping an event), DO NOT reuse.
-- If YES (it is an informational follow-up about the fetched data, like asking for counts, totals, or details of items already mentioned in the conversation history), reply EXACTLY with the word: REUSE
-- If NO (it is a new topic, an action request, or requires fetching new data), rewrite the user's message into a self-contained standalone query incorporating missing context, and reply EXACTLY with: NEW: <standalone_query>
+Rules:
+1. If the user is asking to filter, count, summarize, or analyze the items just discussed (e.g., "out of them how many X", "total for Y", "which ones are Z"), you MUST reuse the data.
+2. If the user uses pronouns referencing the previous data ("them", "those", "these"), you MUST reuse the data.
+3. If the user asks to perform an action (send an email, create/update an event), you MUST NOT reuse the data.
+4. If it's a completely new topic or requires fetching different dates/items, you MUST NOT reuse the data.
+
+Output Format:
+- If you should reuse the data, output EXACTLY the word: REUSE
+- If you must fetch new data, rewrite the message into a standalone search query and output: NEW: <standalone_query>
 `;
       const aiResponse = await llm.invoke([new SystemMessage(followUpPrompt)]);
       const textResponse = aiResponse.content.trim();

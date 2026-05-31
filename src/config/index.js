@@ -8,7 +8,6 @@ module.exports = {
   CLIENT_ID:      process.env.CLIENT_ID,
   CLIENT_SECRET:  process.env.CLIENT_SECRET,
   REFRESH_TOKEN:  process.env.REFRESH_TOKEN,
-  REDIS_URL:      process.env.REDIS_URL || "redis://127.0.0.1:6379",
   SUPABASE_URL:   process.env.SUPABASE_URL,
   SUPABASE_KEY:   process.env.SUPABASE_KEY,
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
