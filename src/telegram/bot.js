@@ -1,12 +1,15 @@
 const { TELEGRAM_TOKEN } = require("../config");
 
-async function tg(chatId, text, retries = 3) {
+async function tg(chatId, text, reply_markup = null, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
+      const payload = { chat_id: chatId, text, parse_mode: "Markdown" };
+      if (reply_markup) payload.reply_markup = reply_markup;
+      
       const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) {
         const errText = await response.text();
