@@ -231,6 +231,7 @@ Rules:
 2. If the user uses pronouns referencing the previous data ("them", "those", "these"), you MUST reuse the data.
 3. If the user asks to perform an action (send an email, create/update an event), you MUST NOT reuse the data.
 4. If it's a completely new topic or requires fetching different dates/items, you MUST NOT reuse the data.
+5. If the user asks to "refresh", "update", "check again", or repeats a previous question, you MUST NOT reuse the data.
 
 Output Format:
 - If you should reuse the data, output EXACTLY the word: REUSE
@@ -296,9 +297,10 @@ Output Format:
       log("sessions", session);
       await tg(chatId,
         "🚫 I can only assist with:\n\n" +
-        "• Expenses & transactions\n• Bookings & events\n" +
+        "• Expenses & transactions\n• Bookings & events (e.g., 'How many trains did I take?')\n" +
         "• Credit card bills\n• Order history\n" +
         "• Reading & replying to emails\n• Creating calendar invites\n\n" +
+        "💡 *Note:* I rely strictly on email receipts. Financial transactions without an email alert cannot be traced.\n\n" +
         "Please adjust your request."
       );
       return;
@@ -322,7 +324,9 @@ Output Format:
       if (gmailSearchQuery && gmailSearchQuery !== "OUT_OF_SCOPE") {
         gmailSearchQuery = gmailSearchQuery
           .replace(/\bbook(ed|ing|s)?\b/gi, '') // Remove strict "booked/booking" constraints
-          .replace(/\bflight[s]?\b/gi, '(flight OR PNR OR "boarding pass" OR ticket)'); // Expand synonyms
+          .replace(/\bfl(own|ew|y)\b/gi, '') // Remove strict flight action verbs
+          .replace(/\b(take|taken|took)\b/gi, '') // Remove strict action verbs
+          .replace(/\b(?:flight|train)[s]?\b/gi, '(flight OR train OR PNR OR "boarding pass" OR ticket)'); // Expand synonyms
         gmailSearchQuery = gmailSearchQuery.replace(/\s+/g, ' ').trim();
       }
     } else if (intent === 9 || intent === 10) {
@@ -434,7 +438,9 @@ Do not deviate from this format and do not output the internal Thread ID.`;
     }
 
     if (intent === 3 || intent === 9) {
-      finalQuery += `\n\nIf the user is managing calendar events, evaluate their request against the provided Google Calendar events (use the provided IDs).
+      finalQuery += `\n\nWhen answering questions about flights, trains, or bookings (past or future), ALWAYS extract and explicitly mention the passenger name(s) associated with each booking. Treat booking confirmations, e-tickets, boarding passes, and train tickets as valid records of journeys.
+
+If the user is managing calendar events, evaluate their request against the provided Google Calendar events (use the provided IDs).
 If they ask to update, RSVP, or delete an event without providing the exact ID (e.g., "Change my 2pm meeting"), find the matching event from the calendar data.
 - If multiple events match the description (e.g., clashing events at the same time), DO NOT output the command. Instead, list the matching events with their details and ask the user to clarify which one they mean.
 - If exactly one event matches, use its ID to output the command.

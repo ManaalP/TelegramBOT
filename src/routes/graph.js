@@ -28,7 +28,9 @@ async function intentNode(state) {
     
     if (intent === 3 && query && query !== "OUT_OF_SCOPE") {
       query = query.replace(/\bbook(ed|ing|s)?\b/gi, '')
-                   .replace(/\bflight[s]?\b/gi, '(flight OR PNR OR "boarding pass" OR ticket)')
+                   .replace(/\bfl(own|ew|y)\b/gi, '')
+                   .replace(/\b(take|taken|took)\b/gi, '')
+                   .replace(/\b(?:flight|train)[s]?\b/gi, '(flight OR train OR PNR OR "boarding pass" OR ticket)')
                    .replace(/\s+/g, ' ').trim();
     }
 
