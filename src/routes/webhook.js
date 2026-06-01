@@ -317,6 +317,14 @@ Output Format:
       if (gmailSearchQuery === "OUT_OF_SCOPE" || !gmailSearchQuery || gmailSearchQuery === "label:^none") {
         gmailSearchQuery = `is:important newer_than:2d -category:promotions -category:social`;
       }
+    } else if (intent === 3) {
+      // Broaden the AI-generated query to catch travel emails that don't explicitly use the word "booked"
+      if (gmailSearchQuery && gmailSearchQuery !== "OUT_OF_SCOPE") {
+        gmailSearchQuery = gmailSearchQuery
+          .replace(/\bbook(ed|ing|s)?\b/gi, '') // Remove strict "booked/booking" constraints
+          .replace(/\bflight[s]?\b/gi, '(flight OR PNR OR "boarding pass" OR ticket)'); // Expand synonyms
+        gmailSearchQuery = gmailSearchQuery.replace(/\s+/g, ' ').trim();
+      }
     } else if (intent === 9 || intent === 10) {
       gmailSearchQuery = "label:^none";
     } else if (intent === 8) {

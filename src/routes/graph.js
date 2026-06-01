@@ -24,7 +24,14 @@ const GraphState = Annotation.Root({
 // 1. Intent Node
 async function intentNode(state) {
   try {
-    const { intent, query } = await resolveQuery(state.userQuery);
+    let { intent, query } = await resolveQuery(state.userQuery);
+    
+    if (intent === 3 && query && query !== "OUT_OF_SCOPE") {
+      query = query.replace(/\bbook(ed|ing|s)?\b/gi, '')
+                   .replace(/\bflight[s]?\b/gi, '(flight OR PNR OR "boarding pass" OR ticket)')
+                   .replace(/\s+/g, ' ').trim();
+    }
+
     return { intent, gmailQuery: query };
   } catch (err) {
     return { error: `Intent resolution failed: ${err.message}` };
