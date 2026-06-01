@@ -323,11 +323,15 @@ Output Format:
       // Broaden the AI-generated query to catch travel emails that don't explicitly use the word "booked"
       if (gmailSearchQuery && gmailSearchQuery !== "OUT_OF_SCOPE") {
         gmailSearchQuery = gmailSearchQuery
-          .replace(/\bbook(ed|ing|s)?\b/gi, '') // Remove strict "booked/booking" constraints
+          .replace(/\bbook(s|ed|ing|ings)?\b/gi, '') // Remove strict "booked/booking" constraints
           .replace(/\bfl(own|ew|y)\b/gi, '') // Remove strict flight action verbs
           .replace(/\b(take|taken|took)\b/gi, '') // Remove strict action verbs
-          .replace(/\b(?:flight|train)[s]?\b/gi, '(flight OR train OR PNR OR "boarding pass" OR ticket)'); // Expand synonyms
+          .replace(/\b(?:flight|train|ticket|irctc)[s]?\b/gi, '(flight OR train OR PNR OR "boarding pass" OR ticket OR IRCTC)'); // Expand synonyms
         gmailSearchQuery = gmailSearchQuery.replace(/\s+/g, ' ').trim();
+        
+        if (!gmailSearchQuery.includes("flight OR train")) {
+          gmailSearchQuery = `(flight OR train OR PNR OR "boarding pass" OR ticket OR IRCTC) ${gmailSearchQuery}`.trim();
+        }
       }
     } else if (intent === 9 || intent === 10) {
       gmailSearchQuery = "label:^none";
@@ -438,7 +442,7 @@ Do not deviate from this format and do not output the internal Thread ID.`;
     }
 
     if (intent === 3 || intent === 9) {
-      finalQuery += `\n\nWhen answering questions about flights, trains, or bookings (past or future), ALWAYS extract and explicitly mention the passenger name(s) associated with each booking. Treat booking confirmations, e-tickets, boarding passes, and train tickets as valid records of journeys.
+      finalQuery += `\n\nWhen answering questions about flights, trains, or bookings (past or future), ALWAYS extract and explicitly mention the passenger name(s) associated with each booking. Categorize and group the results by each passenger's name, so it is clear who took which journey. Treat booking confirmations, e-tickets, boarding passes, and train tickets (including IRCTC) as valid records of journeys. Ensure you check for trains as well as flights.
 
 If the user is managing calendar events, evaluate their request against the provided Google Calendar events (use the provided IDs).
 If they ask to update, RSVP, or delete an event without providing the exact ID (e.g., "Change my 2pm meeting"), find the matching event from the calendar data.

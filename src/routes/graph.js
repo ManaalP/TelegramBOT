@@ -27,11 +27,15 @@ async function intentNode(state) {
     let { intent, query } = await resolveQuery(state.userQuery);
     
     if (intent === 3 && query && query !== "OUT_OF_SCOPE") {
-      query = query.replace(/\bbook(ed|ing|s)?\b/gi, '')
+      query = query.replace(/\bbook(s|ed|ing|ings)?\b/gi, '')
                    .replace(/\bfl(own|ew|y)\b/gi, '')
                    .replace(/\b(take|taken|took)\b/gi, '')
-                   .replace(/\b(?:flight|train)[s]?\b/gi, '(flight OR train OR PNR OR "boarding pass" OR ticket)')
+                   .replace(/\b(?:flight|train|ticket|irctc)[s]?\b/gi, '(flight OR train OR PNR OR "boarding pass" OR ticket OR IRCTC)')
                    .replace(/\s+/g, ' ').trim();
+                   
+      if (!query.includes("flight OR train")) {
+        query = `(flight OR train OR PNR OR "boarding pass" OR ticket OR IRCTC) ${query}`.trim();
+      }
     }
 
     return { intent, gmailQuery: query };
